@@ -129,6 +129,9 @@ import org.apache.ignite.internal.table.distributed.TableManager;
 import org.apache.ignite.internal.table.distributed.TableMessageGroup;
 import org.apache.ignite.internal.table.distributed.raft.snapshot.outgoing.OutgoingSnapshotsManager;
 import org.apache.ignite.internal.thread.NamedThreadFactory;
+import org.apache.ignite.internal.tracing.TracingComponent;
+import org.apache.ignite.internal.tracing.configuration.TracingConfiguration;
+import org.apache.ignite.internal.tracing.otel.OtelTracingComponent;
 import org.apache.ignite.internal.tx.LockManager;
 import org.apache.ignite.internal.tx.TxManager;
 import org.apache.ignite.internal.tx.impl.HeapLockManager;
@@ -293,6 +296,8 @@ public class IgniteImpl implements Ignite {
 
     private final AuthenticationManager authenticationManager;
 
+    private final TracingComponent tracingComponent;
+
     /**
      * The Constructor.
      *
@@ -312,6 +317,8 @@ public class IgniteImpl implements Ignite {
         vaultMgr = createVault(name, workDir);
 
         metricManager = new MetricManager();
+
+        tracingComponent = new OtelTracingComponent(this);
 
         ConfigurationModules modules = loadConfigurationModules(serviceProviderClassLoader);
 
@@ -467,6 +474,8 @@ public class IgniteImpl implements Ignite {
 
         metricManager.configure(clusterConfigRegistry.getConfiguration(MetricConfiguration.KEY));
 
+        tracingComponent.configure(clusterConfigRegistry.getConfiguration(TracingConfiguration.KEY));
+
         restAddressReporter = new RestAddressReporter(workDir);
 
         baselineMgr = new BaselineManager(
@@ -581,10 +590,11 @@ public class IgniteImpl implements Ignite {
                 this,
                 clusterSvc.messagingService(),
                 nodeConfigRegistry.getConfiguration(ComputeConfiguration.KEY),
-                new JobContextManager(deploymentManagerImpl, deploymentManagerImpl.deploymentUnitAccessor(), new JobClassLoaderFactory())
+                new JobContextManager(deploymentManagerImpl, deploymentManagerImpl.deploymentUnitAccessor(), new JobClassLoaderFactory()),
+                tracingComponent
         );
 
-        compute = new IgniteComputeImpl(clusterSvc.topologyService(), distributedTblMgr, computeComponent);
+        compute = new IgniteComputeImpl(clusterSvc.topologyService(), distributedTblMgr, computeComponent, tracingComponent);
 
         authenticationManager = createAuthenticationManager();
 
@@ -745,6 +755,7 @@ public class IgniteImpl implements Ignite {
                                     clusterCfgMgr,
                                     placementDriverMgr,
                                     metricManager,
+                                    tracingComponent,
                                     distributionZoneManager,
                                     computeComponent,
                                     replicaMgr,

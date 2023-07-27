@@ -50,6 +50,7 @@ dependencies {
     implementation project(':ignite-client')
     implementation project(':ignite-marshaller-common')
     implementation project(':ignite-page-memory')
+    implementation project(':ignite-tracing')
 }
 
 description = 'ignite-jacoco-report'

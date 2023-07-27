@@ -20,13 +20,16 @@ apply from: "$rootDir/buildscripts/publishing.gradle"
 apply from: "$rootDir/buildscripts/java-junit5.gradle"
 
 dependencies {
-    implementation project(':ignite-api')
-    implementation project(':ignite-network')
-    implementation project(':ignite-table')
+    api 'io.opentelemetry:opentelemetry-api:1.28.0'
+    api 'io.opentelemetry:opentelemetry-sdk:1.28.0'
+    api 'io.opentelemetry:opentelemetry-exporter-zipkin:1.28.0'
+    api 'io.opentelemetry:opentelemetry-semconv:1.28.0-alpha'
+    api 'io.opentelemetry:opentelemetry-sdk-extension-autoconfigure:1.28.0'
+    api 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-annotations:1.28.0'
+
+    implementation project(path: ':ignite-api')
     implementation project(':ignite-configuration-api')
     implementation project(':ignite-core')
-    implementation project(':ignite-code-deployment')
-    implementation project(':ignite-tracing')
     implementation libs.jetbrains.annotations
     implementation libs.fastutil.core
     implementation libs.auto.service.annotations
@@ -43,4 +46,4 @@ dependencies {
     testImplementation libs.mockito.junit
 }
 
-description = 'ignite-compute'
+description = 'ignite-tracing'

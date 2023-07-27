@@ -70,6 +70,7 @@ import org.apache.ignite.internal.deployunit.exception.DeploymentUnitUnavailable
 import org.apache.ignite.internal.testframework.IgniteTestUtils;
 import org.apache.ignite.internal.testframework.matchers.CompletableFutureExceptionMatcher;
 import org.apache.ignite.internal.thread.NamedThreadFactory;
+import org.apache.ignite.internal.tracing.otel.OtelTracingComponent;
 import org.apache.ignite.lang.NodeStoppingException;
 import org.apache.ignite.network.ClusterNode;
 import org.apache.ignite.network.MessagingService;
@@ -106,6 +107,8 @@ class ComputeComponentImplTest {
     private ConfigurationValue<Long> threadPoolStopTimeoutMillisValue;
     @Mock
     private JobContextManager jobContextManager;
+    @Mock
+    private OtelTracingComponent tracingComponent;
 
     @InjectMocks
     private ComputeComponentImpl computeComponent;
@@ -332,7 +335,7 @@ class ComputeComponentImplTest {
     void executionRejectionCausesExceptionToBeReturnedViaFuture() throws Exception {
         restrictPoolSizeTo1();
 
-        computeComponent = new ComputeComponentImpl(ignite, messagingService, computeConfiguration, jobContextManager) {
+        computeComponent = new ComputeComponentImpl(ignite, messagingService, computeConfiguration, jobContextManager, tracingComponent) {
             @Override
             BlockingQueue<Runnable> newExecutorServiceTaskQueue() {
                 return new SynchronousQueue<>();
@@ -363,7 +366,7 @@ class ComputeComponentImplTest {
     void stopCausesCancellationExceptionOnLocalExecution() throws Exception {
         restrictPoolSizeTo1();
 
-        computeComponent = new ComputeComponentImpl(ignite, messagingService, computeConfiguration, jobContextManager) {
+        computeComponent = new ComputeComponentImpl(ignite, messagingService, computeConfiguration, jobContextManager, tracingComponent) {
             @Override
             long stopTimeoutMillis() {
                 return 100;

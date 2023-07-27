@@ -53,6 +53,7 @@ import org.apache.ignite.internal.network.serialization.ClassDescriptorRegistry;
 import org.apache.ignite.internal.network.serialization.DescriptorRegistry;
 import org.apache.ignite.internal.network.serialization.marshal.UserObjectMarshaller;
 import org.apache.ignite.internal.thread.NamedThreadFactory;
+import org.apache.ignite.internal.tracing.otel.OtelTracingComponent;
 import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.lang.IgniteException;
 import org.apache.ignite.lang.NodeStoppingException;
@@ -271,7 +272,8 @@ public class DefaultMessagingService extends AbstractMessagingService {
             NetworkMessage message
     ) {
         if (isInNetworkThread()) {
-            return CompletableFuture.supplyAsync(() -> sendMessage0(consistentId, type, addr, message), outboundExecutor)
+            return CompletableFuture.supplyAsync(OtelTracingComponent.wrap0(() -> sendMessage0(consistentId, type, addr, message)),
+                            outboundExecutor)
                     .thenCompose(Function.identity());
         }
 

@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.compute.message;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.apache.ignite.internal.compute.ComputeMessageTypes;
 import org.apache.ignite.network.NetworkMessage;
@@ -51,4 +52,11 @@ public interface ExecuteRequest extends NetworkMessage {
      */
     @Marshallable
     Object @Nullable [] args();
+
+    /**
+     * Returns headers.
+     *
+     * @return headers
+     */
+    Map<String, String> headers();
 }

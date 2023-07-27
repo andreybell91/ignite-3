@@ -26,10 +26,14 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 import org.apache.ignite.compute.DeploymentUnit;
 import org.apache.ignite.compute.IgniteCompute;
 import org.apache.ignite.internal.table.IgniteTablesInternal;
 import org.apache.ignite.internal.table.TableImpl;
+import org.apache.ignite.internal.tracing.ContextScope;
+import org.apache.ignite.internal.tracing.Span;
+import org.apache.ignite.internal.tracing.TracingComponent;
 import org.apache.ignite.internal.util.IgniteNameUtils;
 import org.apache.ignite.lang.IgniteInternalException;
 import org.apache.ignite.lang.TableNotFoundException;
@@ -47,30 +51,44 @@ public class IgniteComputeImpl implements IgniteCompute {
     private final TopologyService topologyService;
     private final IgniteTablesInternal tables;
     private final ComputeComponent computeComponent;
+    private final TracingComponent tracingComponent;
 
     private final ThreadLocalRandom random = ThreadLocalRandom.current();
 
     /**
      * Create new instance.
      */
-    public IgniteComputeImpl(TopologyService topologyService, IgniteTablesInternal tables, ComputeComponent computeComponent) {
+    public IgniteComputeImpl(TopologyService topologyService, IgniteTablesInternal tables, ComputeComponent computeComponent,
+            TracingComponent tracingComponent) {
         this.topologyService = topologyService;
         this.tables = tables;
         this.computeComponent = computeComponent;
+        this.tracingComponent = tracingComponent;
     }
 
     /** {@inheritDoc} */
     @Override
     public <R> CompletableFuture<R> execute(Set<ClusterNode> nodes, List<DeploymentUnit> units, String jobClassName, Object... args) {
-        Objects.requireNonNull(nodes);
-        Objects.requireNonNull(units);
-        Objects.requireNonNull(jobClassName);
+        Span span = tracingComponent.getTracer(IgniteComputeImpl.class.getPackage().toString()).startSpan("compute", "execute");
+        try (ContextScope scope = span.makeCurrent()) {
+            span.setAttribute("ignite.command.arg.job_class_name", jobClassName)
+                    .setAttribute("ignite.command.arg.deployment_unit.names",
+                            units.stream().map(DeploymentUnit::name).collect(Collectors.toList()))
+                    .setAttribute("ignite.command.arg.node.names", nodes.stream().map(ClusterNode::name).collect(Collectors.toList()));
 
-        if (nodes.isEmpty()) {
-            throw new IllegalArgumentException("nodes must not be empty.");
+            Objects.requireNonNull(nodes);
+            Objects.requireNonNull(units);
+            Objects.requireNonNull(jobClassName);
+
+            if (nodes.isEmpty()) {
+                throw new IllegalArgumentException("nodes must not be empty.");
+            }
+
+            // In this scope, the span is the current/active span
+            return executeOnOneNode(randomNode(nodes), units, jobClassName, args);
+        } finally {
+            span.end();
         }
-
-        return executeOnOneNode(randomNode(nodes), units, jobClassName, args);
     }
 
     private ClusterNode randomNode(Set<ClusterNode> nodes) {
@@ -157,7 +175,7 @@ public class IgniteComputeImpl implements IgniteCompute {
         return requiredLeaderByPartition(table, table.partition(key));
     }
 
-    private static  <K> ClusterNode leaderOfTablePartitionByMappedKey(TableImpl table, K key, Mapper<K> keyMapper) {
+    private static <K> ClusterNode leaderOfTablePartitionByMappedKey(TableImpl table, K key, Mapper<K> keyMapper) {
         return requiredLeaderByPartition(table, table.partition(key, keyMapper));
     }
 

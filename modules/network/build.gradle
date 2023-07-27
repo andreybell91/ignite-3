@@ -30,6 +30,7 @@ dependencies {
     implementation project(':ignite-configuration-api')
     implementation project(':ignite-core')
     implementation project(':ignite-vault')
+    implementation project(':ignite-tracing')
     implementation libs.jetbrains.annotations
     implementation libs.scalecube.cluster
     implementation libs.fastutil.core

@@ -22,7 +22,9 @@ import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.apache.ignite.internal.compute.ClassLoaderExceptionsMapper.mapClassLoaderExceptions;
 
 import java.lang.reflect.Constructor;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -47,6 +49,12 @@ import org.apache.ignite.internal.future.InFlightFutures;
 import org.apache.ignite.internal.logger.IgniteLogger;
 import org.apache.ignite.internal.logger.Loggers;
 import org.apache.ignite.internal.thread.NamedThreadFactory;
+import org.apache.ignite.internal.tracing.ContextScope;
+import org.apache.ignite.internal.tracing.Span;
+import org.apache.ignite.internal.tracing.SpanStatus;
+import org.apache.ignite.internal.tracing.Tracer;
+import org.apache.ignite.internal.tracing.TracingComponent;
+import org.apache.ignite.internal.tracing.otel.OtelTracingComponent;
 import org.apache.ignite.internal.util.IgniteSpinBusyLock;
 import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.lang.IgniteInternalException;
@@ -85,6 +93,10 @@ public class ComputeComponentImpl implements ComputeComponent {
 
     private ExecutorService jobExecutorService;
 
+    private final TracingComponent tracingComponent;
+
+    private Tracer tracer;
+
     /**
      * Creates a new instance.
      */
@@ -92,11 +104,13 @@ public class ComputeComponentImpl implements ComputeComponent {
             Ignite ignite,
             MessagingService messagingService,
             ComputeConfiguration configuration,
-            JobContextManager jobContextManager) {
+            JobContextManager jobContextManager,
+            TracingComponent tracingComponent) {
         this.ignite = ignite;
         this.messagingService = messagingService;
         this.configuration = configuration;
         this.jobContextManager = jobContextManager;
+        this.tracingComponent = tracingComponent;
     }
 
     /** {@inheritDoc} */
@@ -127,17 +141,26 @@ public class ComputeComponentImpl implements ComputeComponent {
 
     private <R> CompletableFuture<R> startLocalExecution(Class<? extends ComputeJob<R>> jobClass, Object[] args) {
         try {
-            return CompletableFuture.supplyAsync(() -> executeJob(jobClass, args), jobExecutorService);
+            return CompletableFuture.supplyAsync(OtelTracingComponent.wrap0(() -> executeJob(jobClass, args)), jobExecutorService);
         } catch (RejectedExecutionException e) {
             return failedFuture(e);
         }
     }
 
     private <R> R executeJob(Class<? extends ComputeJob<R>> jobClass, Object[] args) {
-        ComputeJob<R> job = instantiateJob(jobClass);
-        JobExecutionContext context = new JobExecutionContextImpl(ignite);
-        // TODO: IGNITE-16746 - translate NodeStoppingException to a public exception
-        return job.execute(context, args);
+        Span span = tracer.startSpan("compute", "executeJob");
+        try (ContextScope scope = span.makeCurrent()) {
+            span.setAttribute("ignite.command.arg.execute_request.job_class_name", jobClass.getName());
+
+            ComputeJob<R> job = instantiateJob(jobClass);
+            JobExecutionContext context = new JobExecutionContextImpl(ignite);
+            // TODO: IGNITE-16746 - translate NodeStoppingException to a public exception
+            R execute = job.execute(context, args);
+            span.setStatus(SpanStatus.OK);
+            return execute;
+        } finally {
+            span.end();
+        }
     }
 
     private <R> ComputeJob<R> instantiateJob(Class<? extends ComputeJob<R>> jobClass) {
@@ -179,10 +202,14 @@ public class ComputeComponentImpl implements ComputeComponent {
                 .map(this::toDeploymentUnitMsg)
                 .collect(Collectors.toList());
 
+        Map<String, String> headers = new HashMap<>(3);
+        tracer.inject(headers);
+
         ExecuteRequest executeRequest = messagesFactory.executeRequest()
                 .deploymentUnits(deploymentUnitMsgs)
                 .jobClassName(jobClassName)
                 .args(args)
+                .headers(headers)
                 .build();
 
         CompletableFuture<R> future = messagingService.invoke(remoteNode, executeRequest, NETWORK_TIMEOUT_MILLIS)
@@ -202,6 +229,8 @@ public class ComputeComponentImpl implements ComputeComponent {
     /** {@inheritDoc} */
     @Override
     public synchronized void start() {
+        tracer = tracingComponent.getTracer(ComputeComponentImpl.class.getPackage().toString());
+
         jobExecutorService = new ThreadPoolExecutor(
                 configuration.threadPoolSize().value(),
                 configuration.threadPoolSize().value(),
@@ -229,30 +258,46 @@ public class ComputeComponentImpl implements ComputeComponent {
     }
 
     private void processExecuteRequest(ExecuteRequest executeRequest, String senderConsistentId, long correlationId) {
-        if (!busyLock.enterBusy()) {
-            sendExecuteResponse(null, new NodeStoppingException(), senderConsistentId, correlationId);
-            return;
-        }
+        try (ContextScope extracted = tracer.extract(executeRequest.headers())) {
+            Span span = tracer.startSpan("compute", "processExecuteRequest");
+            try (ContextScope scope = span.makeCurrent()) {
+                span.setAttribute("ignite.command.arg.sender_consistent_id", senderConsistentId)
+                        .setAttribute("ignite.command.arg.correlation_id", correlationId)
+                        .setAttribute("ignite.command.arg.execute_request.job_class_name", executeRequest.jobClassName());
 
-        try {
-            List<DeploymentUnit> units = toDeploymentUnit(executeRequest.deploymentUnits());
+                span.addEvent("created");
 
-            mapClassLoaderExceptions(jobClassLoader(units), executeRequest.jobClassName())
-                    .whenComplete((context, err) -> {
-                        if (err != null) {
-                            if (context != null) {
-                                context.close();
-                            }
+                if (!busyLock.enterBusy()) {
+                    span.addEvent("unsuccessfully enter busy");
+                    sendExecuteResponse(null, new NodeStoppingException(), senderConsistentId, correlationId);
+                    span.addEvent("sent execute response");
+                    return;
+                }
 
-                            sendExecuteResponse(null, err, senderConsistentId, correlationId);
-                        }
+                try {
+                    List<DeploymentUnit> units = toDeploymentUnit(executeRequest.deploymentUnits());
 
-                        doExecuteLocally(jobClass(context.classLoader(), executeRequest.jobClassName()), executeRequest.args())
-                                .whenComplete((r, e) -> context.close())
-                                .handle((result, ex) -> sendExecuteResponse(result, ex, senderConsistentId, correlationId));
-                    });
-        } finally {
-            busyLock.leaveBusy();
+                    mapClassLoaderExceptions(jobClassLoader(units), executeRequest.jobClassName())
+                            .whenComplete((context, err) -> {
+                                if (err != null) {
+                                    if (context != null) {
+                                        context.close();
+                                    }
+
+                                    sendExecuteResponse(null, err, senderConsistentId, correlationId);
+                                }
+
+                                span.addEvent("do execute locally");
+                                doExecuteLocally(jobClass(context.classLoader(), executeRequest.jobClassName()), executeRequest.args())
+                                        .whenComplete((r, e) -> context.close())
+                                        .handle((result, ex) -> sendExecuteResponse(result, ex, senderConsistentId, correlationId));
+                            });
+                } finally {
+                    busyLock.leaveBusy();
+                }
+            } finally {
+                span.end();
+            }
         }
     }
 
