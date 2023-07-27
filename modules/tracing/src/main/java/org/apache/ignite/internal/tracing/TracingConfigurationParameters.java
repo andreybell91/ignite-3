@@ -26,4 +26,7 @@ public class TracingConfigurationParameters {
 
     /** Max valid sampling rate with special meaning that span will be always created. */
     public static final double SAMPLING_RATE_ALWAYS = 1.0d;
+
+    /** Ignite scope attribute name. */
+    public static final String IGNITE_SCOPE_ATTRIBUTE_NAME = "ignite.scope.name";
 }

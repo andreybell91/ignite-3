@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.tracing.otel;
 
+import static org.apache.ignite.internal.tracing.TracingConfigurationParameters.IGNITE_SCOPE_ATTRIBUTE_NAME;
+
 import io.opentelemetry.api.baggage.Baggage;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -54,13 +56,13 @@ public class OtelBaggageBasedSampler implements Sampler, ConfigurationListener<T
             return SamplingResult.drop();
         }
 
-        String value = Baggage.fromContext(parentContext).getEntryValue("ignite.scope.id");
+        String value = Baggage.fromContext(parentContext).getEntryValue(IGNITE_SCOPE_ATTRIBUTE_NAME);
 
         if (value == null) {
             return SamplingResult.drop();
         }
 
-        if (Long.valueOf(value).equals(attributes.get(AttributeKey.longKey("ignite.scope.id")))) {
+        if (value.equals(attributes.get(AttributeKey.stringKey(IGNITE_SCOPE_ATTRIBUTE_NAME)))) {
             return SamplingResult.recordAndSample();
         }
 

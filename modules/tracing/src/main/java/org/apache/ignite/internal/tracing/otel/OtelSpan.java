@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.tracing.otel;
 
+import static org.apache.ignite.internal.tracing.TracingConfigurationParameters.IGNITE_SCOPE_ATTRIBUTE_NAME;
+
 import io.opentelemetry.api.baggage.Baggage;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.StatusCode;
@@ -87,7 +89,7 @@ public class OtelSpan implements Span {
     @Override
     public ContextScope makeCurrent() {
         Baggage baggage = Baggage.builder()
-                .put("ignite.scope.name", scope)
+                .put(IGNITE_SCOPE_ATTRIBUTE_NAME, scope)
                 .build();
         return new OtelContextScope(Context.current().with(span).with(baggage).makeCurrent());
     }
